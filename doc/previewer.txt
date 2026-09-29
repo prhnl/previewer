@@ -1,0 +1,102 @@
+*previewer.txt*  Build a file on save and keep a viewer showing the result
+
+==============================================================================
+USAGE                                                        *previewer*
+
+:Preview [action]                                              *:Preview*
+        With no action, or `toggle`: start or stop the preview of this
+        buffer. `on`, `off`: just that. `build`: build now. `log`: the
+        command and output of the last build, in a split.
+
+<Plug>(preview)       toggles, for a mapping of your own.
+
+Starting builds the file and opens the viewer. After that every save
+builds again (or every pause in typing, see `trigger`), and the viewer is
+told to reload. It is only started again when it has gone away. A failed
+build is reported with the end of its output and leaves the last good
+result on screen: builds write beside the output and are moved over it
+only when they succeed. A save during a build means one more build after
+it. Stopping, wiping the buffer or leaving Neovim ends the viewer.
+
+==============================================================================
+SPECS                                                    *previewer-spec*
+
+What a preview does comes from, later ones winning:
+  1. the filetype's entry in `filetypes` (see setup below),
+  2. `vim.b.preview`, a table of the same fields (strings only),
+  3. lines in the first or last ten lines of the file itself, in whatever
+     comment the language has:                        *previewer-directives*
+>
+        # preview-build: sh %f %o
+        # preview-output: out.png
+        # preview-view: swayimg %o
+<
+     Keys: build, output, view, reload, trigger.
+
+Fields:
+  build     Command that makes the output. None: the file is shown as is.
+  output    Where the output is, relative to the file. Default: a file in
+            stdpath("cache")/previewer, removed when the preview stops.
+  ext       Extension of that default output ("png", "html", ...).
+  stdin     true: the buffer is the command's input, so unsaved text works.
+            A function(ctx) returns the input instead; ctx.text is the
+            buffer.
+  view      Command that shows the output, or "browser". None: chosen by
+            the output's extension from `viewers`.
+  reload    How a running viewer learns of a new build: a signal
+            ("SIGUSR2"), a command, or a function(ctx, viewer). None: the
+            viewer notices by itself (zathura does).
+  restart   true: close the viewer and open a new one after every build,
+            for viewers that cannot reload at all.
+  keep      true: the viewer stays open when the preview stops.
+  trigger   "save" (default) or "change": also after a pause in typing.
+            Mostly useful with stdin.
+
+Commands can be strings or lists. In both, %f is the file, %o the output,
+%d the file's directory, %r the file without its extension, %t its name,
+%u the preview URL, %% a percent sign. A string with nothing but words is
+run directly; one with shell syntax in it goes through sh, with the
+placeholders quoted for you (do not quote them yourself). A viewer that is
+sent a signal should be a plain command or a list, so the signal reaches
+it and not a shell. Builds run in the file's directory.
+
+A function in place of a command gets ctx: { buf, file, dir, root, tail,
+output, url, text } and returns a string or list.
+
+==============================================================================
+BROWSER                                                *previewer-browser*
+
+view = "browser" serves the file's directory on 127.0.0.1, so relative
+images and stylesheets work, and puts a small script into every HTML page
+that reloads it, keeping the scroll position, after each build. Saving any
+other file in that directory (a stylesheet, say) reloads it too. The
+browser is opened again only when no page of the preview is open.
+
+==============================================================================
+SETUP                                                    *previewer-setup*
+>lua
+    require("previewer").setup({
+      debounce = 300,     -- ms, for trigger = "change"
+      timeout = 60000,    -- ms before a build is killed
+      browser = nil,      -- e.g. "firefox --new-window %u"; nil: vim.ui.open
+      port = 0,           -- 0: any free port
+      filetypes = {
+        markdown = { trigger = "change" },            -- merged into the default
+        plantuml = { build = "plantuml -tsvg -pipe", stdin = true, ext = "svg",
+                     view = "swayimg %o", reload = "SIGUSR2" },
+        dot = false,                                  -- no preview
+      },
+      viewers = { pdf = { view = "zathura %o" } },    -- by output extension
+    })
+<
+Built in: markdown (pandoc), html, svg, magick (.mgk, `magick -script`),
+dot, gnuplot, typst. See lua/previewer/defaults.lua. For a filetype Neovim
+does not know, add it with |vim.filetype.add()|.
+
+swayimg reloads on SIGUSR2 only when its config says so:
+>lua
+    swayimg.viewer.on_signal("USR2", function() swayimg.viewer.reload() end)
+<
+Without that the signal ends it, and it is opened again at once.
+
+ vim:tw=78:ts=8:ft=help:norl:
